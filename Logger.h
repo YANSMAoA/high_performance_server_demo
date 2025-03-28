@@ -12,7 +12,7 @@ enum LogLevel {
 
 class Logger {
 public:
-    static void LogMessage(LogLevel level, const char* foramt, ...) {
+    static void logMessage(LogLevel level, const char* foramt, ...) {
         std::ofstream LogFile("server.log", std::ios::app); 
 
         auto now = std::chrono::system_clock::now();
@@ -40,6 +40,6 @@ public:
 
 //LOG_INFO("Hello, %s", name) => Logger::LogMessage(INFO, "Hello, %s", name)。
 
-#define LOG_INFO(...) Logger::LogMessage(INFO, __VA_ARGS__)
-#define LOG_WARNING(...) Logger::LogMessage(WARNING, __VA_ARGS__)
-#define LOG_ERROR(...) Logger::LogMessage(ERROR, __VA_ARGS__)
+#define LOG_INFO(...) Logger::logMessage(INFO, __VA_ARGS__)
+#define LOG_WARNING(...) Logger::logMessage(WARNING, __VA_ARGS__)
+#define LOG_ERROR(...) Logger::logMessage(ERROR, __VA_ARGS__)

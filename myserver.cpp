@@ -8,7 +8,9 @@
 #include <string.h> 
 #include <unistd.h>  
 
+#include <sstream>
 #include "Logger.h"
+#include "Database.h"
 
 #define PORT 8080
 
@@ -16,6 +18,31 @@ using RequestHandler = std::function<std::string(const std::string&)>;
 
 std::map<std::string, RequestHandler> get_routes;
 std::map<std::string, RequestHandler> post_routes;
+Database db("users.db");
+
+std::map<std::string, std::string> parseFormBody(const std::string& body) {
+    std::map<std::string, std::string> params;
+    std::istringstream steam(body);
+    std::string pair;
+
+    LOG_INFO("Parsing body: %s", body.c_str());  
+
+    while (std::getline(steam, pair, '&')) {
+        std::string::size_type pos = pair.find('=');
+        if (pos != std::string::npos) {
+            std::string key = pair.substr(0, pos);
+            std::string value = pair.substr(pos + 1);
+            params[key] = value;
+
+            LOG_INFO("Parsed key-value pair: %s = %s" , key.c_str(), value.c_str());
+        } else {
+            std::string error_msg = "Error parsing: " + pair;
+            LOG_ERROR(error_msg.c_str()); 
+            std::cerr << error_msg << std::endl;
+        }
+    }
+    return params;
+}
 
 void setupRoutes() {
     LOG_INFO("Setting up routes");
@@ -32,15 +59,32 @@ void setupRoutes() {
     };
 
     post_routes["/register"] = [](const std::string& request) {
-        return "Register Success!";
+        auto params = parseFormBody(request);
+        std::string username = params["username"];
+        std::string password = params["password"];
+
+        if (db.registerUser(username, password)) {
+            return "Register Success!";
+        } else {
+            return "Register Failed!";
+        }
     };
 
     post_routes["/login"] = [](const std::string& request) {
-        return "Login Success!";
+        
+        auto params = parseFormBody(request);
+        std::string username = params["username"];
+        std::string password = params["password"];
+
+        if (db.loginUser(username, password)) {
+            return "Login Success!";
+        } else {
+            return "Login Failed!";
+        }
     };
 }
 
-std::pair<std::string, std::string> parseHttpRequest(const std::string& request) {
+std::tuple<std::string, std::string, std::string> parseHttpRequest(const std::string& request) {
     LOG_INFO("Prasing HTTP requset");
 
     size_t method_end = request.find(" ");
@@ -49,7 +93,15 @@ std::pair<std::string, std::string> parseHttpRequest(const std::string& request)
     size_t uri_end = request.find(" ", method_end + 1);
     std::string uri = request.substr(method_end + 1, uri_end - method_end - 1);
 
-    return {method, uri};
+    std::string body;
+    if (method == "POST") {
+        size_t body_start = request.find("\r\n\r\n");
+        if (body_start != std::string::npos) {
+            body = request.substr(body_start + 4);
+        }
+    }
+
+    return {method, uri, body};
 }
 
 std::string handleHttpRequest(const std::string& method, const std::string& uri, const std::string& body) {
