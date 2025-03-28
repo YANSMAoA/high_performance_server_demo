@@ -33,3 +33,5 @@
 
 .*             # 忽略所有以.开头的文件
 !.gitignore   # 例外：不忽略 .gitignore
+.*/
+*.log

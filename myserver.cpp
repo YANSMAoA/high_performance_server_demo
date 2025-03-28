@@ -12,20 +12,50 @@
 
 using RequestHandler = std::function<std::string(const std::string&)>;
 
-std::map<std::string, RequestHandler> route_table;
+std::map<std::string, RequestHandler> get_routes;
+std::map<std::string, RequestHandler> post_routes;
 
 void setupRoutes() {
-    route_table["/"] = [](const std::string& request) {
+    get_routes["/"] = [](const std::string& request) {
         return "HelloWorld!";
     };
 
-    route_table["/register"] = [](const std::string& request) {
-        return "RegisterSuccess!";
+    get_routes["/register"] = [](const std::string& request) {
+        return "Please use POST to register";
     };
 
-    route_table["/login"] = [](const std::string& request) {
-        return "LoginSuccess!";
+    get_routes["/login"] = [](const std::string& request) {
+        return "Please use POST to login";
     };
+
+    post_routes["/register"] = [](const std::string& request) {
+        return "Register Success!";
+    };
+
+    post_routes["/login"] = [](const std::string& request) {
+        return "Login Success!";
+    };
+}
+
+std::pair<std::string, std::string> parseHttpRequest(const std::string& request) {
+    size_t method_end = request.find(" ");
+    std::string method = request.substr(0, method_end);
+
+    size_t uri_end = request.find(" ", method_end + 1);
+    std::string uri = request.substr(method_end + 1, uri_end - method_end - 1);
+
+    return {method, uri};
+}
+
+std::string handleHttpRequest(const std::string& method, const std::string& uri, const std::string& body) {
+    if (method == "GET" && get_routes.count(uri) > 0) {
+        return get_routes[uri](body);
+    }
+    else if (method == "POST" && post_routes.count(uri) > 0) {
+        return post_routes[uri](body);
+    } else {
+        return "404 Not Found";
+    }
 }
 
 int main() {
@@ -53,15 +83,9 @@ int main() {
         read(new_socket, buffer, 1024);
         std::string request(buffer);
 
-        std::string uri = request.substr(request.find(" ") + 1);
-        uri = uri.substr(0, uri.find(" "));
+        auto [method, uri] = parseHttpRequest(request);
 
-        std::string response_body;
-        if (route_table.count(uri) > 0) {
-            response_body = route_table[uri](request);
-        } else {
-            response_body = "404 Not Found";
-        }
+        std::string response_body = handleHttpRequest(method, uri, request);
         
         std::string response = "HTTP/1.1 200 OK\nContent-Type: text/plain\n\n" + response_body;
         send(new_socket, response.c_str(), response.size(), 0);
