@@ -38,8 +38,8 @@ public:
     }
 };
 
-//LOG_INFO("Hello, %s", name) => Logger::logMessage(INFO, "Hello, %s", name)。
+//LOG_INFO("Hello, %s", name) => Logger::LogMessage(INFO, "Hello, %s", name)。
 
-#define LOG_INFO(...) Logger::logMessage(INFO, __VA_ARGS__)
-#define LOG_WARNING(...) Logger::logMessage(WARNING, __VA_ARGS__)
-#define LOG_ERROR(...) Logger::logMessage(ERROR, __VA_ARGS__)
+#define LOG_INFO(...) Logger::LogMessage(INFO, __VA_ARGS__)
+#define LOG_WARNING(...) Logger::LogMessage(WARNING, __VA_ARGS__)
+#define LOG_ERROR(...) Logger::LogMessage(ERROR, __VA_ARGS__)
