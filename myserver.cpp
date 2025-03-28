@@ -144,7 +144,7 @@ int main() {
         read(new_socket, buffer, 1024);
         std::string request(buffer);
 
-        auto [method, uri] = parseHttpRequest(request);
+        auto [method, uri, body] = parseHttpRequest(request);
 
         std::string response_body = handleHttpRequest(method, uri, request);
         
