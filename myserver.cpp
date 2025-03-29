@@ -3,6 +3,8 @@
 #include <functional>
 #include <string>  
 #include <sys/socket.h> 
+#include <sys/epoll.h>
+#include <fcntl.h>
 #include <stdlib.h>  
 #include <netinet/in.h> 
 #include <string.h> 
@@ -13,6 +15,7 @@
 #include "Database.h"
 
 #define PORT 8080
+#define MAX_EVENTS 100
 
 using RequestHandler = std::function<std::string(const std::string&)>;
 
@@ -116,10 +119,55 @@ std::string handleHttpRequest(const std::string& method, const std::string& uri,
     }
 }
 
+void setNonBlocking(int sock) {
+    int opts = fcntl(sock, F_GETFL);
+    if (opts < 0) {
+        LOG_ERROR("fcntl(F_GETFL) failed on socket %d: %s", sock, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    opts != O_NONBLOCK;
+    if (fcntl(sock, F_SETFL, opts) < 0) {
+        LOG_ERROR("fcntl(F_SETFL) failed on socket %d: %s", sock, strerror(errno)); 
+        exit(EXIT_FAILURE);
+    }
+    LOG_INFO("Set socket %d to non-blocking", sock);
+}
+
+void handleClientSocket(int client_fd) {
+    char buffer[4096];
+    std::string request;
+
+    while (true) {
+        ssize_t bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
+        if (bytes_read > 0) {
+            buffer[bytes_read] = '\0';
+            request += buffer;
+        } else if (bytes_read == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            break;
+        } else {
+            LOG_ERROR("Read error or connection closed on fd %d", client_fd);
+            close(client_fd);
+            return;
+        }
+    }
+
+    if (!request.empty()) {
+        auto [method, uri, body] = parseHttpRequest(request);
+        std::string response_body = handleHttpRequest(method, uri, body);
+        std::string response = "HTTP/1.1 200 OK\nContent-Type: text/plain\n\n" + response_body;
+        send(client_fd, response.c_str(), response.length(), 0);
+    }
+
+    close(client_fd);
+    LOG_INFO("Closed connection on fd %d", client_fd);
+}
+
 int main() {
     int server_fd, new_socket;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
+    struct epoll_event ev, events[MAX_EVENTS];
+    int epollfd;
 
     // 1. 创建服务器端套节字
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -129,28 +177,66 @@ int main() {
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(PORT);
 
-    bind(server_fd, (struct sockaddr *)&address, sizeof(address));
+    if(bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        LOG_ERROR("Bind failed");
+        return -1;
+    }
 
-    listen(server_fd, 3);
+    if (listen(server_fd, 3) < 0) {
+        LOG_ERROR("Listen failed");
+        return -1;
+    }
     LOG_INFO("Server listening on port %d", PORT);
 
     setupRoutes();
     LOG_INFO("Server starting");
 
-    while (true) {
-        new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
-
-        char buffer[1024] = {0};
-        read(new_socket, buffer, 1024);
-        std::string request(buffer);
-
-        auto [method, uri, body] = parseHttpRequest(request);
-
-        std::string response_body = handleHttpRequest(method, uri, request);
-        
-        std::string response = "HTTP/1.1 200 OK\nContent-Type: text/plain\n\n" + response_body;
-        send(new_socket, response.c_str(), response.size(), 0);
-
-        close(new_socket);
+    epollfd = epoll_create1(0);
+    if (epollfd == -1) {
+        LOG_ERROR("epoll_create1 failed");
+        exit(EXIT_FAILURE);
     }
+    LOG_INFO("Epoll instance create with fd %d", epollfd);
+
+    ev.events = EPOLLIN | EPOLLET;
+    ev.data.fd = server_fd;
+    if (epoll_ctl(epollfd, EPOLL_CTL_ADD, server_fd, &ev) == -1) {
+        LOG_ERROR("Failed to add server_fd to epoll");
+        exit(EXIT_FAILURE);
+    }
+    LOG_INFO("Server socket added to epoll instance");
+
+
+
+    while (true) {
+        LOG_INFO("Waiting for events...");
+        int nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
+        if (nfds == -1) {
+            LOG_ERROR("epoll_wait failed");
+            exit(EXIT_FAILURE);
+        }
+        LOG_INFO("%d events ready", nfds);
+
+        for (int n = 0; n < nfds; n++) {
+            if (events[n].data.fd == server_fd) {
+                LOG_INFO("Server socket event triggered");
+                while ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) > 0) {
+                    setNonBlocking(new_socket);
+                    ev.events = EPOLLIN | EPOLLET; 
+                    ev.data.fd = new_socket; 
+                    if (epoll_ctl(epollfd, EPOLL_CTL_ADD, new_socket, &ev) == -1) {
+                        LOG_ERROR("Failed to add new socket to epoll");
+                        close(new_socket);
+                    }
+                    LOG_INFO("New connection accepted: fd %d", new_socket);
+                }
+            } else {
+                LOG_INFO("Handling client socket event: fd %d", events[n].data.fd);
+                handleClientSocket(events[n].data.fd);
+            }
+        }
+    }
+
+    close(server_fd);
+    LOG_INFO("Server shutdown");
 }
