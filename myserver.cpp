@@ -13,6 +13,7 @@
 #include <sstream>
 #include "Logger.h"
 #include "Database.h"
+#include "Logger.h"
 
 #define PORT 8080
 #define MAX_EVENTS 100
@@ -206,7 +207,8 @@ int main() {
     }
     LOG_INFO("Server socket added to epoll instance");
 
-
+    ThreadPool pool(16);
+    LOG_INFO("Thread pool created with 4 threads");
 
     while (true) {
         LOG_INFO("Waiting for events...");
@@ -231,8 +233,9 @@ int main() {
                     LOG_INFO("New connection accepted: fd %d", new_socket);
                 }
             } else {
-                LOG_INFO("Handling client socket event: fd %d", events[n].data.fd);
-                handleClientSocket(events[n].data.fd);
+                pool.enqueue([fd = events[n].data.fd]() {
+                    handleConnection(fd);
+                });
             }
         }
     }
