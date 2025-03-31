@@ -1,9 +1,12 @@
+#pragma once //确保头文件在编译过程中只被包含一次。
 #include <sqlite3.h>
 #include <string>
+#include <mutex>
 
 class Database {
 private:
     sqlite3* db;
+    std::mutex dbMutex;
 
 public:
     Database(const std::string& db_path) {
@@ -23,6 +26,7 @@ public:
     }
 
     bool registerUser(const std::string& username, const std::string& password) {
+        std::lock_guard<std::mutes> guard(dbMutex);
         std::string sql =  "INSERT INTO users (username, password) VALUES (?, ?);";
         sqlite3_stmt* stmt;
         if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
@@ -45,6 +49,7 @@ public:
     }
 
     bool loginUser(const std::string& username, const std::string& password) {
+        std::lock_guard<std::mutex> guard(dbMutex);
         std::string sql = "SELECT password FROM users WHERE username = ?;";
         sqlite3_stmt* stmt;
 
@@ -72,5 +77,6 @@ public:
 
         // 登录成功，记录日志
         LOG_INFO("User logged in: %s" , username.c_str());
+        return true;
     }
 };
