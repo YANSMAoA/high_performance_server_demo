@@ -1,109 +1,131 @@
-#pragma once
 #include "HttpRequest.h"
 #include "HttpResponse.h"
 #include "Database.h"
 #include <functional>
-#include <fstream>
+#include <unordered_map>
+#include <future>
+#include <sys/stat.h>  // 包含 mkdir 函数的声明
+#include <cerrno>      // 包含 errno 的声明
+
 
 class Router {
 public:
     using HandlerFunc = std::function<HttpResponse(const HttpRequest&)>;
 
     void addRoute(const std::string& method, const std::string& path, HandlerFunc handler) {
-        routes[method + "|" + path] = handler;   
+        routes[method + "|" + path] = handler;
     }
 
     HttpResponse routeRequest(const HttpRequest& request) {
         std::string key = request.getMethodString() + "|" + request.getPath();
+        LOG_WARNING("routeRequest: %s", key);
         if (routes.count(key)) {
             return routes[key](request);
         }
-
         return HttpResponse::makeErrorResponse(404, "Not Found");
     }
 
-    std::string readFile(const std::string& filePath) {
-        std::ifstream file(filePath);
-
-        if (!file.is_open()) {
-            return "Error: Unable to open file " + filePath;
-        }
-
-        std::stringstream buffer;
-
-        buffer << file.rdbuf();
-
-        return buffer.str();
-    }
-
     void setupDatabaseRoutes(Database& db) {
-        
-        addRoute("GET", "/register", [this](const HttpRequest& req) -> HttpResponse {
-            HttpResponse response;
-            response.setStatusCode(200);
-            response.setHeader("Content-Type", "text/html");
-            response.setBody(readFile("UI/login.html"));
-            return response;
-        });
-
-        addRoute("POST", "/login", [this](const HttpRequest& req) -> HttpResponse {
-            HttpResponse response;
-            response.setStatusCode(200);
-            response.setHeader("Content-Type", "text/html");
-            response.setBody(readFile("UI/register.html"));
-            return response;
-        });
-
-        addRoute("POST", "/register", [&db](const HttpRequest& req) -> HttpResponse {
-            auto params = req.parseFormbody();
+         // 注册路由
+        addRoute("POST", "/register", [&db](const HttpRequest& req) {
+            auto params = req.parseFormBody(); 
             std::string username = params["username"];
-            std::string password = params["pasword"];
-
+            std::string password = params["password"];
+            // 异步调用数据库注册方法
             if (db.registerUser(username, password)) {
-                HttpResponse response;
-                response.setStatusCode(200); 
-                response.setHeader("Content-Type", "text/html");
-                std::string responseBody = R"(
-                    <html>
-                    <head>
-                        <title>Register Success</title>
-                        <script type="text/javascript">
-                            alert("Register Success!");
-                            window.location = "/login";
-                        </script>
-                    </head>
-                    <body>
-                        <h2>moving to login...</h2>
-                    </body>
-                    </html>
-                )";
-                response.setBody(responseBody);
-                return response;
+                return HttpResponse::makeOkResponse("Register Success!");
             } else {
                 return HttpResponse::makeErrorResponse(400, "Register Failed!");
             }
         });
 
-        addRoute("POST", "/login", [&db](const HttpRequest& req) -> HttpResponse {
-            auto params = req.parseFormbody();
+        // 登录路由
+        addRoute("POST", "/login", [&db](const HttpRequest& req) {
+            auto params = req.parseFormBody();
             std::string username = params["username"];
             std::string password = params["password"];
-            if (db.loginUser(username, password)) {
-                HttpResponse response;
-                response.setStatusCode(200); 
-                response.setHeader("Content-Type", "text/html");
-                response.setBody("<html><body><h2>Login Successful</h2></body></html>");
-                return response;
+            // 异步调用数据库登录方法
+            if (db.loginUser(username, password)){
+                return HttpResponse::makeOkResponse("Login Success!");
             } else {
-                HttpResponse response;
-                response.setStatusCode(401); 
-                response.setHeader("Content-Type", "text/html");
-                response.setBody("<html><body><h2>Login Failed</h2></body></html>");
-                return response;
+                return HttpResponse::makeErrorResponse(400, "Login Failed!");
             }
         });
     }
 
-private: 
+void setupImageRoutes(Database& db) {
+        // 图片上传路由
+       addRoute("POST", "/upload", [&db](const HttpRequest& req) {
+        // 获取表单字段
+        std::string fileContent = req.getFileContent("file");
+        std::string fileName = req.getFileName("file");  // 使用新方法获取文件名
+        std::string description = req.getFormField("description");
+
+        // 检查并创建目录
+        std::string dirPath = "images/";
+        try {
+            if (mkdir(dirPath.c_str(), 0777) == -1 && errno != EEXIST) {
+                LOG_ERROR("Failed to create directory: %s", dirPath.c_str());
+                return HttpResponse::makeErrorResponse(500, "Internal Server Error: Unable to create directory");
+            }
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception while creating directory: %s, error: %s", dirPath.c_str(), e.what());
+            return HttpResponse::makeErrorResponse(500, "Internal Server Error: Exception while creating directory");
+        }
+
+        // 保存文件到服务器的某个路径
+        std::string filePath = dirPath + fileName;
+        try {
+            std::ofstream file(filePath, std::ios::binary);
+            if (!file.is_open()) {
+                LOG_ERROR("Failed to open file for writing: %s", filePath.c_str());
+                return HttpResponse::makeErrorResponse(500, "Internal Server Error: Unable to save file");
+            }
+            file.write(fileContent.c_str(), fileContent.size());
+            file.close();
+            LOG_INFO("File saved successfully: %s", filePath.c_str());
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception while saving file: %s, error: %s", filePath.c_str(), e.what());
+            return HttpResponse::makeErrorResponse(500, "Internal Server Error: Exception while saving file");
+        }
+
+        // 将图片信息存入数据库
+        try {
+            if (!db.storeImage(fileName, filePath, description)) {
+                LOG_ERROR("Failed to store image info in database for: %s", fileName.c_str());
+                return HttpResponse::makeErrorResponse(500, "Internal Server Error: Unable to store image info");
+            }
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception while storing image info in database for: %s, error: %s", fileName.c_str(), e.what());
+            return HttpResponse::makeErrorResponse(500, "Internal Server Error: Exception while storing image info");
+        }
+
+        LOG_INFO("Image uploaded successfully: %s", fileName.c_str());
+        return HttpResponse::makeOkResponse("Image uploaded successfully");
+    });
+
+
+        // 获取图片列表路由
+        addRoute("GET", "/images", [&db](const HttpRequest& req) {
+            std::vector<std::string> imageList = db.getImageList();
+            std::stringstream ss;
+            ss << "[";
+            for (size_t i = 0; i < imageList.size(); ++i) {
+                ss << "\"" << imageList[i] << "\"";
+                if (i < imageList.size() - 1) {
+                    ss << ", ";
+                }
+            }
+            ss << "]";
+
+            HttpResponse response;
+            response.setStatusCode(200);
+            response.setHeader("Content-Type", "application/json");
+            response.setBody(ss.str());
+            return response;
+        });
+    }
+
+private:
     std::unordered_map<std::string, HandlerFunc> routes;
 };

@@ -18,11 +18,8 @@ COPY . /usr/src/myapp
 # 设置工作目录
 WORKDIR /usr/src/myapp
 
-# 在 Dockerfile 中创建缓存目录
-RUN mkdir -p /var/cache/nginx
-
-# 编译程序 (确保您的编译命令适用于您的项目)
-RUN g++ -o myserver10 main.cpp -lsqlite3
+# # 编译程序 (确保您的编译命令适用于您的项目)
+# RUN g++ -o myserver10 main.cpp -lsqlite3
 
 # 暴露端口（Nginx 和您的应用程序）
 EXPOSE 80 8080 8081
